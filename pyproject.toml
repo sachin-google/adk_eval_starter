@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Customer Service Agent component"
 requires-python = ">=3.10"
 dependencies = [
-    "google-adk[eval]<1.30.0",
+    "google-adk[eval,a2a]<1.30.0",
     "pandas",
     "google-cloud-aiplatform[agent_engines,evaluation]>=1.69.0",
     "python-dotenv",

@@ -43,12 +43,25 @@ gcloud config set project "$PROJECT_ID_FROM_FILE" --quiet
 export PROJECT_ID=$(gcloud config get project)
 echo "Exported PROJECT_ID=$PROJECT_ID"
 
-# 4. Export PROJECT_NUMBER
-export PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)")
+# 4. Export PROJECT_NUMBER (gcloud first; fall back to GCE metadata on scope-restricted VMs)
+export PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)" 2>/dev/null)
+if [ -z "$PROJECT_NUMBER" ]; then
+  echo "gcloud scope insufficient — fetching PROJECT_NUMBER from GCE metadata service..."
+  export PROJECT_NUMBER=$(curl -sf -H "Metadata-Flavor: Google" \
+    "http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id" 2>/dev/null)
+fi
 echo "Exported PROJECT_NUMBER=$PROJECT_NUMBER"
 
-# 5. Export SERVICE_ACCOUNT_NAME (Default Compute Service Account)
-export SERVICE_ACCOUNT_NAME=$(gcloud compute project-info describe --format="value(defaultServiceAccount)")
+# 5. Export SERVICE_ACCOUNT_NAME (gcloud first; fall back to metadata, then derive from PROJECT_NUMBER)
+export SERVICE_ACCOUNT_NAME=$(gcloud compute project-info describe --format="value(defaultServiceAccount)" 2>/dev/null)
+if [ -z "$SERVICE_ACCOUNT_NAME" ]; then
+  echo "gcloud scope insufficient — fetching SERVICE_ACCOUNT_NAME from GCE metadata service..."
+  export SERVICE_ACCOUNT_NAME=$(curl -sf -H "Metadata-Flavor: Google" \
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email" 2>/dev/null)
+fi
+if [ -z "$SERVICE_ACCOUNT_NAME" ] && [ -n "$PROJECT_NUMBER" ]; then
+  export SERVICE_ACCOUNT_NAME="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+fi
 echo "Exported SERVICE_ACCOUNT_NAME=$SERVICE_ACCOUNT_NAME"
 
 
