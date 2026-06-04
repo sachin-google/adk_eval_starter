@@ -2,12 +2,36 @@
 
 A retail customer service agent built with Google ADK that handles purchase history lookups, refunds, and product inquiries.
 
+## Architecture
+
+```
+User / Gemini Enterprise
+        │  A2A protocol
+        ▼
+  Cloud Run (--a2a)          ← serves A2A endpoints + agent card
+        │  session_service_uri=agentengine://...
+        ▼
+  Vertex AI Agent Engine     ← agent computation + managed session persistence
+```
+
+- **Vertex AI Agent Engine** — runs the agent logic and stores sessions durably on Vertex AI
+- **Cloud Run (A2A)** — exposes A2A-compliant endpoints; delegates session management to Agent Engine
+- **Gemini Enterprise App** — discovers and routes users to the agent via the A2A agent card
+
+---
+
 ## Prerequisites
 
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Google Cloud project with billing enabled
-- `gcloud` CLI authenticated (`gcloud auth login && gcloud auth application-default login`)
+- `gcloud` CLI authenticated:
+  ```bash
+  gcloud auth login
+  gcloud auth application-default login
+  ```
+
+---
 
 ## Setup
 
@@ -15,12 +39,16 @@ A retail customer service agent built with Google ADK that handles purchase hist
 # Install uv if not present
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Set environment variables and generate .env
+# Set GCP environment variables and generate .env
 source set_env.sh
 
 # Install dependencies
 uv sync
 ```
+
+`set_env.sh` writes a `.env` file with project, region, and telemetry settings used by both the agent and the deploy script.
+
+---
 
 ## Running Locally
 
@@ -32,49 +60,44 @@ uv run adk web customer_service_agent
 
 ## Deployment
 
-### Option A — Vertex AI Agent Engine + Gemini Enterprise App
-
-This deploys the agent to Vertex AI Agent Engine (managed, serverless) and registers it with the Gemini Enterprise Agent Platform.
-
-**Deploy and register in one step:**
+`deploy.sh` runs all three phases in a single command:
 
 ```bash
 ./deploy.sh
 ```
 
-The script:
-1. Enables required GCP APIs (`aiplatform`, `cloudresourcemanager`)
-2. Deploys the agent to Vertex AI Agent Engine (~5–10 min first run)
-3. Saves the Agent Engine resource ID to `.agent_engine_id` for future updates
-4. Registers the agent with Gemini Enterprise App
+### Phase 1 — Vertex AI Agent Engine
 
-**Subsequent updates** (redeploys in place, ~1–2 min):
+Deploys the agent to Vertex AI Agent Engine for managed, serverless execution and durable session storage.
 
-```bash
-./deploy.sh
-```
+- First run creates a new Agent Engine instance (~5–10 min)
+- The numeric resource ID is saved to `.agent_engine_id`
+- Subsequent runs pass `--agent_engine_id` to update in place (~2–3 min)
 
-The saved `.agent_engine_id` is picked up automatically to update the existing engine instead of creating a new one.
+### Phase 2 — Cloud Run (A2A)
 
-**Make the agent available to users:**
+Deploys the same agent to Cloud Run with the `--a2a` flag, connecting sessions to the Agent Engine deployed in Phase 1.
 
-1. Go to the [Gemini Enterprise console](https://console.cloud.google.com/gemini/enterprise/apps)
+- Enables the A2A agent card at `/a2a/customer_service_agent/.well-known/agent-card.json`
+- Sessions are stored in Agent Engine, so conversations are shared across both surfaces
+
+### Phase 3 — Gemini Enterprise Registration
+
+Registers the Cloud Run A2A endpoint with the Gemini Enterprise Agent Platform using `agent-starter-pack`.
+
+**After registration, share the agent with users:**
+
+1. Open the [Gemini Enterprise console](https://console.cloud.google.com/gemini/enterprise/apps)
 2. Navigate to **Your App → Agents**
 3. Click **Share custom agents** and add users or Google Groups
 
----
+**Environment variables deployed with the agent** (set in `.env` via `set_env.sh`):
 
-### Option B — Cloud Run + Gemini Enterprise App (A2A)
-
-This deploys the agent as an A2A-compatible Cloud Run service and registers it via the agent card protocol.
-
-**Deploy and register:**
-
-```bash
-./deploy.sh
-```
-
-> To switch between Agent Engine and Cloud Run, edit `deploy.sh` and swap the deployment section. The current default is Agent Engine.
+| Variable | Value | Purpose |
+|---|---|---|
+| `GOOGLE_GENAI_USE_VERTEXAI` | `TRUE` | Route model calls through Vertex AI |
+| `GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY` | `true` | Enable Agent Engine telemetry |
+| `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` | `true` | Capture message content in traces |
 
 ---
 
@@ -83,7 +106,6 @@ This deploys the agent as an A2A-compatible Cloud Run service and registers it v
 ### 1. Programmatic Evaluation (Pytest) — Recommended
 
 ```bash
-# From project root
 PYTHONPATH=. uv run pytest customer_service_agent/test_agent_eval.py
 ```
 
@@ -115,11 +137,13 @@ PYTHONPATH=. uv run pytest customer_service_agent/test_golden_eval.py
 .
 ├── customer_service_agent/
 │   ├── agent.py              # Agent definition and tools
-│   ├── requirements.txt      # Agent-specific dependencies
+│   ├── agent.json            # A2A agent card (auto-generated by deploy.sh, gitignored)
+│   ├── requirements.txt      # Agent-specific runtime dependencies
 │   ├── eval.test.json        # Evaluation test cases
 │   └── test_agent_eval.py    # Pytest evaluation runner
-├── deploy.sh                 # Deploy to Agent Engine + register with Gemini Enterprise
-├── set_env.sh                # Set GCP environment variables and generate .env
+├── deploy.sh                 # Three-phase deploy: Agent Engine + Cloud Run A2A + Gemini Enterprise
+├── set_env.sh                # Set GCP environment variables and write .env
 ├── pyproject.toml            # Project dependencies
-└── .agent_engine_id          # Saved Agent Engine ID (auto-generated, gitignored)
+├── .env                      # Generated by set_env.sh (gitignored)
+└── .agent_engine_id          # Saved Agent Engine resource ID (gitignored)
 ```
