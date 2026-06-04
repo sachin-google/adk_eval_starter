@@ -1,6 +1,7 @@
 .env
 .venv
 customer_service_agent/agent.json
+.agent_engine_id
 *.lock
 __pycache__/
 *.pyc
